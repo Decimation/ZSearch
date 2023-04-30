@@ -1,7 +1,8 @@
-﻿using Flurl;
+﻿using System.Diagnostics;
+using Flurl;
 using Flurl.Http;
-using JetBrains.Annotations;
 using Spectre.Console;
+using ZSearch.Server;
 
 // ReSharper disable InconsistentNaming
 
@@ -9,7 +10,21 @@ namespace ZSearch;
 
 public static class Program
 {
+	private static readonly FlurlClient Client = new FlurlClient();
+
 	private const string BASE_URL = "https://free-mp3-download.net/search.php";
+
+	static Program()
+	{
+		FlurlHttp.Configure(settings =>
+		{
+			settings.Redirects.Enabled                    = true; // default true
+			settings.Redirects.AllowSecureToInsecure      = true; // default false
+			settings.Redirects.ForwardAuthorizationHeader = true; // default false
+			settings.Redirects.MaxAutoRedirects           = 5;    // default 10 (consecutive)
+		});
+
+	}
 
 	public static async Task<int> Main(string[] args)
 	{
@@ -23,75 +38,39 @@ public static class Program
 			query = args[0];
 		}
 
-		Url u = BASE_URL.SetQueryParam("s", query, true);
+		Client.OnRedirect(call =>
+		{
+			call.Redirect.ChangeVerbToGet = (call.Response.StatusCode == 301);
+			call.Redirect.Follow          = true;
+			Debug.WriteLine($"{call.Redirect.Url}");
+		});
+
+		CookieJar cj = new CookieJar();
+
+		var r1 = await Client.Request("https://free-mp3-download.net/")
+			         .WithCookies(cj)
+			         .GetAsync();
+
+		foreach (FlurlCookie c in cj) {
+			Debug.WriteLine($"{c.Name} {c.Value}");
+		}
+
+		var u = Client.Request(BASE_URL)
+			.SetQueryParam("s", query, true)
+			.WithAutoRedirect(true)
+			.AllowAnyHttpStatus()
+			.WithCookies(cj);
 
 		var r = await u.GetAsync();
-		var j = await r.GetJsonAsync<Root>();
+		var j = await r.GetJsonAsync<ResultRoot>();
 
+		Debug.WriteLine($"{r.ResponseMessage.Content.Headers}");
 		Console.WriteLine($"{j.total}");
 
-		foreach (Datum d1 in j.data) {
+		foreach (Item d1 in j.data) {
 			Console.WriteLine($"{d1}");
 		}
 
 		return 0;
 	}
-}
-
-[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
-public class Album
-{
-	public int    id           { get; set; }
-	public string title        { get; set; }
-	public string cover        { get; set; }
-	public string cover_small  { get; set; }
-	public string cover_medium { get; set; }
-	public string cover_big    { get; set; }
-	public string cover_xl     { get; set; }
-	public string md5_image    { get; set; }
-	public string tracklist    { get; set; }
-	public string type         { get; set; }
-}
-
-[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
-public class Artist
-{
-	public int    id             { get; set; }
-	public string name           { get; set; }
-	public string link           { get; set; }
-	public string picture        { get; set; }
-	public string picture_small  { get; set; }
-	public string picture_medium { get; set; }
-	public string picture_big    { get; set; }
-	public string picture_xl     { get; set; }
-	public string tracklist      { get; set; }
-	public string type           { get; set; }
-}
-
-[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
-public class Datum
-{
-	public long   id                      { get; set; }
-	public bool   readable                { get; set; }
-	public string title                   { get; set; }
-	public string title_short             { get; set; }
-	public string title_version           { get; set; }
-	public string link                    { get; set; }
-	public int    duration                { get; set; }
-	public int    rank                    { get; set; }
-	public bool   explicit_lyrics         { get; set; }
-	public int    explicit_content_lyrics { get; set; }
-	public int    explicit_content_cover  { get; set; }
-	public string preview                 { get; set; }
-	public string md5_image               { get; set; }
-	public Artist artist                  { get; set; }
-	public Album  album                   { get; set; }
-	public string type                    { get; set; }
-}
-
-[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
-public class Root
-{
-	public List<Datum> data  { get; set; }
-	public int         total { get; set; }
 }
